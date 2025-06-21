@@ -4,6 +4,7 @@ This module provides functionality to create and manage retrievers for different
 vector store backends, specifically Elasticsearch, Pinecone, and MongoDB.
 """
 
+import logging # Added for logging
 import os
 from contextlib import contextmanager
 from typing import Generator
@@ -12,25 +13,41 @@ from langchain_core.embeddings import Embeddings
 from langchain_core.runnables import RunnableConfig
 from langchain_core.vectorstores import VectorStoreRetriever
 
-from shared.configuration import BaseConfiguration
+from shared.configuration import BaseConfiguration 
+from custom_providers.openai_custom_embeddings import OpenAICustomEmbeddings # Added import
+
+logger = logging.getLogger(__name__) # Added logger instance
 
 ## Encoder constructors
 
 
-def make_text_encoder(model: str) -> Embeddings:
+def make_text_encoder(embedding_model_name_prefixed: str) -> Embeddings: # Renamed 'model' to 'embedding_model_name_prefixed' for clarity
     """Connect to the configured text encoder."""
-    provider, model = model.split("/", maxsplit=1)
-    match provider:
-        case "openai":
-            from langchain_openai import OpenAIEmbeddings
-
-            return OpenAIEmbeddings(model=model)
-        case "cohere":
-            from langchain_cohere import CohereEmbeddings
-
-            return CohereEmbeddings(model=model)  # type: ignore
-        case _:
-            raise ValueError(f"Unsupported embedding provider: {provider}")
+    provider, model_name_part = embedding_model_name_prefixed.split("/", maxsplit=1)
+    
+    if provider == "openai_custom_embeddings":
+        logger.info(f"Loading custom OpenAI embedding model: {model_name_part}")
+        # Assuming OpenAICustomEmbeddings handles API key via environment variable OPENAI_API_KEY
+        # and has its own defaults.
+        # If specific kwargs (e.g. dimensions) were needed from BaseConfiguration
+        # they would be passed here.
+        return OpenAICustomEmbeddings(model_name=model_name_part)
+    elif provider == "openai":
+        from langchain_openai import OpenAIEmbeddings
+        logger.info(f"Loading OpenAI embedding model: {model_name_part}")
+        return OpenAIEmbeddings(model=model_name_part)
+    elif provider == "cohere":
+        from langchain_cohere import CohereEmbeddings
+        logger.info(f"Loading Cohere embedding model: {model_name_part}")
+        return CohereEmbeddings(model=model_name_part)  # type: ignore
+    elif provider == "matryoshka_arabic": # New case for Matryoshka
+        from custom_providers.matryoshka_arabic_embeddings import MatryoshkaArabicEmbeddings
+        logger.info(f"Loading MatryoshkaArabicEmbeddings model: {model_name_part}") # model_name_part could be 'default_768dim'
+        # Assuming MatryoshkaArabicEmbeddings takes normalize_text and potentially other params
+        # For now, using a common default. Adjust if specific params are needed from model_name_part
+        return MatryoshkaArabicEmbeddings(normalize_text=True)
+    else:
+        raise ValueError(f"Unsupported embedding provider: {provider}")
 
 
 ## Retriever constructors

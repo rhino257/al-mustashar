@@ -20,23 +20,44 @@ dependencies = [
     "msgspec>=0.18.6",
     "langchain-mongodb>=0.1.9",
     "langchain-cohere>=0.2.4",
+    "google-generativeai>=0.7.2",
+    "portkey-ai>=1.0.0", # Added Portkey SDK
+    "fastapi>=0.111.0",
+    "uvicorn[standard]>=0.29.0",
+    "pydantic>=2.7.0",
+    "sse-starlette>=2.0.0",
+    "httpx>=0.27.0",
+    "supabase==2.5.0",
+    "gotrue==2.8.1"
 ]
 
 [project.optional-dependencies]
 dev = ["mypy>=1.11.1", "ruff>=0.6.1"]
 
 [build-system]
-requires = ["setuptools>=73.0.0", "wheel"]
+requires = ["setuptools>=78.1.1", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-packages = ["retrieval_graph", "index_graph", "shared"]
+packages = [
+    "retrieval_graph", 
+    "index_graph", 
+    "shared", 
+    "custom_nodes", 
+    "custom_providers",
+    "prompts",
+    "almustashar_api" # Added the new API package
+]
 [tool.setuptools.package-dir]
 "langgraph.templates.retrieval_graph" = "src/retrieval_graph"
 "langgraph.templates.index_graph" = "src/index_graph"
 "retrieval_graph" = "src/retrieval_graph"
 "index_graph" = "src/index_graph"
 "shared" = "src/shared"
+"custom_nodes" = "src/custom_nodes"
+"custom_providers" = "src/custom_providers"
+"prompts" = "src/prompts"
+"almustashar_api" = "src/almustashar_api" # Added path for the new API package
 
 
 [tool.setuptools.package-data]
@@ -69,3 +90,7 @@ convention = "google"
 pythonpath = [
   "src"
 ]
+log_cli = true
+log_cli_level = "INFO"
+log_format = "%(asctime)s %(levelname)s %(name)s: %(message)s"
+log_date_format = "%Y-%m-%d %H:%M:%S"

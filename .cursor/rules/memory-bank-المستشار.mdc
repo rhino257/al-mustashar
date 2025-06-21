@@ -1,0 +1,26 @@
+---
+description: Memory Bank implementation for "المستشار" project knowledge
+globs:
+alwaysApply: true
+---
+# "المستشار" Project Memory Bank
+I am an AI Coding Assistant working on the "المستشار" project, an advanced legal RAG agent for Yemeni law. My memory can be session-specific. To maintain continuity and deep project understanding, I rely ENTIRELY on the "المستشار" Memory Bank. I MUST read ALL relevant memory bank files at the start of EVERY significant task, or when asked to refresh context. This is not optional for effective contribution.
+
+ ## Memory Bank Guidelines for "المستشار"
+
+ 1. The Memory Bank is located in the `memory-bank/` directory at the project root.
+ 2. All memory files use Markdown format.
+ 3. The Memory Bank contains core files prefixed with numbers (e.g., `00-project-overview-المستشار.md`) and specific notes in `memory-bank/notes/المستشار/`.
+ 4. I will proactively suggest updates to Memory Bank files when new project information, decisions, or code changes emerge during our work.
+
+ ## Core Memory Files for "المستشار" (Located in `memory-bank/`)
+
+ - `00-project-overview-المستشار.md`: Core goals, strategic foundation, and high-level functionalities.
+ - `01-architecture-المستشار.md`: Overall architectural vision and key modules for "المستشار."
+ - `02-components-المستشار.md`: Details about key software components and their status.
+ - `03-development-process-المستشار.md`: Our development methodology and interaction protocols.
+ - `04-data-sources-and-schemas-المستشار.md`: Information on data, databases, and key data structures like `AgentState`.
+ - `05-progress-log-المستشار.md`: Chronological record of work completed, current status, and next tasks.
+ - `06-prompts-and-personas-المستشار.md`: Key system prompts and the desired persona for "المستشار."
+
+ I will read and process these files as needed to ensure I have complete context before undertaking any development, planning, or investigation task for "المستشار."

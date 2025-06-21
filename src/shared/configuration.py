@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os # Added import for os.getenv
 from dataclasses import dataclass, field, fields
 from typing import Annotated, Any, Literal, Optional, Type, TypeVar
 
@@ -20,19 +21,19 @@ class BaseConfiguration:
         str,
         {"__template_metadata__": {"kind": "embeddings"}},
     ] = field(
-        default="openai/text-embedding-3-small",
+        default="openai_custom_embeddings/text-embedding-ada-002", # Reverted to text-embedding-ada-002
         metadata={
             "description": "Name of the embedding model to use. Must be a valid embedding model name."
         },
     )
 
     retriever_provider: Annotated[
-        Literal["elastic-local", "elastic", "pinecone", "mongodb"],
+        Literal["elastic-local", "elastic", "mongodb", "supabase_hybrid"], # Removed "pinecone", added "supabase_hybrid"
         {"__template_metadata__": {"kind": "retriever"}},
     ] = field(
-        default="elastic-local",
+        default="supabase_hybrid", # Changed default to supabase_hybrid
         metadata={
-            "description": "The vector store provider to use for retrieval. Options are 'elastic', 'pinecone', or 'mongodb'."
+            "description": "The vector store provider to use for retrieval. Options are 'elastic', 'mongodb', or 'supabase_hybrid'."
         },
     )
 
@@ -41,6 +42,43 @@ class BaseConfiguration:
         metadata={
             "description": "Additional keyword arguments to pass to the search function of the retriever."
         },
+    )
+
+    # Pinecone fields removed
+    # pinecone_top_k: int = field(
+    #     default=10,
+    #     metadata={
+    #         "description": "The number of results to retrieve from Pinecone."
+    #     },
+    # )
+
+    # Knowledge Supabase
+    knowledge_supabase_url: Optional[str] = field(
+        default=None,
+        metadata={"description": "URL for the Knowledge Supabase instance."},
+    )
+    knowledge_supabase_key: Optional[str] = field(
+        default=None,
+        metadata={"description": "Service role key for the Knowledge Supabase instance."},
+    )
+
+    # Hybrid Search Parameters
+    hybrid_search_threshold: float = field(
+        default=0.55, # Increased from 0.5 to make semantic search stricter
+        metadata={"description": "Similarity threshold for Supabase hybrid search."},
+    )
+    hybrid_search_match_count: int = field(
+        default=20, # Changed to 20 as per user request for performance testing
+        metadata={"description": "Number of matches to retrieve from Supabase hybrid search."},
+    )
+    retriever_per_source_limit: int = field(
+        default=20, 
+        metadata={"description": "Number of matches to retrieve per source in Supabase hybrid search (e.g., for articles, for comments)."}
+    )
+
+    PORTKEY_API_KEY: Optional[str] = field(
+        default_factory=lambda: os.getenv("PORTKEY_API_KEY"),
+        metadata={"description": "API key for Portkey.ai service."},
     )
 
     @classmethod
@@ -56,10 +94,22 @@ class BaseConfiguration:
         Returns:
             T: An instance of IndexConfiguration with the specified configuration.
         """
+        import logging # Temporary import for logging
+        logger = logging.getLogger(__name__) # Temporary logger
+
         config = ensure_config(config)
         configurable = config.get("configurable") or {}
+        
+        logger.info(f"BaseConfiguration.from_runnable_config called for class {cls.__name__}.")
+        logger.info(f"Received configurable: {configurable}")
+
         _fields = {f.name for f in fields(cls) if f.init}
-        return cls(**{k: v for k, v in configurable.items() if k in _fields})
+        
+        # Log which fields are being populated
+        final_kwargs = {k: v for k, v in configurable.items() if k in _fields}
+        logger.info(f"Populating {cls.__name__} with kwargs: {final_kwargs}")
+        
+        return cls(**final_kwargs)
 
 
 T = TypeVar("T", bound=BaseConfiguration)

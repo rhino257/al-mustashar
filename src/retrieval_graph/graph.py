@@ -5,20 +5,48 @@ retrieval graph. It includes the main graph definition, state management,
 and key functions for processing & routing user queries, generating research plans to answer user questions,
 conducting research, and formulating responses.
 """
+import logging
+import time # Added for timing
+from typing import Any, Literal, Optional, TypedDict, cast
 
-from typing import Any, Literal, TypedDict, cast
+logger = logging.getLogger(__name__) # Initialize logger at module level
 
 from langchain_core.messages import BaseMessage
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph import END, START, StateGraph
+from langgraph.checkpoint.memory import MemorySaver # Import MemorySaver (will be replaced)
+from supabase import create_client # Import Supabase client, removed AsyncClient
+from almustashar_api.config import USERS_SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY # Import Supabase credentials
+
+# Custom node for Yemeni legal query understanding
+from custom_nodes.comprehension_nodes import understand_yemeni_legal_query_node
+# Import the new multi-embedding node
+from custom_nodes.embedding_nodes import generate_multi_embeddings_node
+# Existing custom nodes
+from custom_nodes.retrieval_nodes import (
+    generate_query_embedding_node,
+    # pinecone_semantic_retriever_node, # Removed
+    supabase_hybrid_retriever_node, 
+)
+# Import the new synthesis and conversational nodes
+from custom_nodes.response_nodes import (
+    synthesize_yemeni_legal_answer_node,
+    handle_conversational_query_node,
+    prepare_synthesis_node,
+)
+# Import new direct lookup nodes
+from custom_nodes.direct_lookup_node import (
+    execute_direct_supabase_lookup_node, # Changed from prepare_direct_lookup_node
+    # process_direct_lookup_result_node, # This node is now removed/merged
+)
 
 from retrieval_graph.configuration import AgentConfiguration
 from retrieval_graph.researcher_graph.graph import graph as researcher_graph
-from retrieval_graph.state import AgentState, InputState, Router
+from retrieval_graph.state import AgentState, InputState, Router # Router might be deprecated soon
 from shared.utils import format_docs, load_chat_model
 
 
-async def analyze_and_route_query(
+async def analyze_and_route_query( # This will likely be deprecated or repurposed
     state: AgentState, *, config: RunnableConfig
 ) -> dict[str, Router]:
     """Analyze the user's query and determine the appropriate routing.
@@ -34,7 +62,7 @@ async def analyze_and_route_query(
         dict[str, Router]: A dictionary containing the 'router' key with the classification result (classification type and logic).
     """
     configuration = AgentConfiguration.from_runnable_config(config)
-    model = load_chat_model(configuration.query_model)
+    model = load_chat_model(configuration.query_model, configuration) # Pass full configuration
     messages = [
         {"role": "system", "content": configuration.router_system_prompt}
     ] + state.messages
@@ -58,15 +86,99 @@ def route_query(
     Raises:
         ValueError: If an unknown router type is encountered.
     """
-    _type = state.router["type"]
-    if _type == "langchain":
-        return "create_research_plan"
+    _type = state.router["type"] # This uses the old Router TypedDict
+    if _type == "langchain": # This classification is from the old router
+        return "create_research_plan" # This path will be disconnected
     elif _type == "more-info":
-        return "ask_for_more_info"
+        return "ask_for_more_info" # This path will be disconnected
     elif _type == "general":
-        return "respond_to_general_query"
+        return "respond_to_general_query" # This path will be disconnected
     else:
-        raise ValueError(f"Unknown router type {_type}")
+        # This path should ideally not be hit if understand_yemeni_legal_query_node is the entry.
+        # If it is, it means state.router was somehow populated by an old mechanism.
+        # For safety, we can route to a generic response or END.
+        # However, the new routing logic below should take precedence.
+        raise ValueError(f"Unknown router type from old router: {_type}")
+
+def initial_intake_router(state: AgentState) -> Literal[
+    "process_direct_lookup_result_node",
+    "understand_yemeni_legal_query_node",
+    "handle_conversational_query_node"  # Added new possible route
+]:
+    """
+    Initial router to check for simple greetings or if the query needs full understanding.
+    The check for pending MCP responses for direct lookup is removed as direct lookup is now synchronous within the graph.
+    """
+    # Define simple Arabic greetings
+    simple_greetings = [
+        "السلام عليكم",
+        "سلام عليكم",
+        "سلام",
+        "مرحبا",
+        "أهلا",
+        "اهلا",
+        "أهلا وسهلا",
+        "اهلا وسهلا",
+        "صباح الخير",
+        "مساء الخير",
+    ]
+    # Normalize query for comparison (e.g., remove punctuation, extra spaces if needed)
+    last_message_content = ""
+    if state.messages and isinstance(state.messages[-1].content, str):
+        last_message_content = state.messages[-1].content.strip()
+
+    if last_message_content in simple_greetings:
+        logger.info(f"Simple greeting '{last_message_content}' detected. Routing directly to handle_conversational_query_node.")
+        return "handle_conversational_query_node"
+
+    logger.info("No simple greeting, routing to understand_yemeni_legal_query_node for full query processing.")
+    return "understand_yemeni_legal_query_node"
+
+def route_yemeni_legal_query(state: AgentState, *, config: RunnableConfig) -> Literal[
+    "generate_query_embedding_node",
+    "handle_conversational_query_node",
+    "execute_direct_supabase_lookup_node",
+    "error_handler_node",
+    "END"
+]:
+    """
+    Determines the next step based on the classification from understand_yemeni_legal_query_node.
+    """
+    classification = state.query_classification
+    analysis_result = state.query_analysis_result
+    
+    app_config = AgentConfiguration.from_runnable_config(config)
+    agent_persona = app_config.agent_persona
+
+    logger.info(f"Routing based on Yemeni legal query classification: {classification} for persona: {agent_persona}")
+
+    if state.error_message and state.error_node == "understand_yemeni_legal_query_node":
+        logger.error(f"Error in understand_yemeni_legal_query_node: {state.error_message}. Routing to END.")
+        return "END"
+
+    if classification == "legal_query_conceptual_search":
+        if agent_persona == "المستشار":
+            logger.info(f"Query is conceptual search for 'المستشار' persona. Routing to generate_multi_embeddings_node.")
+            return "generate_multi_embeddings_node"
+        else:
+            logger.info(f"Query is conceptual search for '{agent_persona}' persona. Routing to generate_query_embedding_node.")
+            return "generate_query_embedding_node"
+            
+    elif classification == "legal_query_direct_lookup":
+        if analysis_result and analysis_result.law_name and analysis_result.article_number:
+            logger.info("Query classified as legal_query_direct_lookup. Routing to execute_direct_supabase_lookup_node.")
+            return "execute_direct_supabase_lookup_node"
+        else:
+            logger.warning("Classification is legal_query_direct_lookup, but missing law_name/article_number. Falling back to conceptual search.")
+            return "generate_query_embedding_node"
+
+    elif classification == "conversational" or classification == "other":
+        logger.info(f"Query classified as '{classification}'. Routing to handle_conversational_query_node.")
+        return "handle_conversational_query_node"
+        
+    else:
+        logger.warning(f"Unknown or None query classification: '{classification}'. Routing to handle_conversational_query_node as a fallback.")
+        return "handle_conversational_query_node"
 
 
 async def ask_for_more_info(
@@ -84,7 +196,7 @@ async def ask_for_more_info(
         dict[str, list[str]]: A dictionary with a 'messages' key containing the generated response.
     """
     configuration = AgentConfiguration.from_runnable_config(config)
-    model = load_chat_model(configuration.query_model)
+    model = load_chat_model(configuration.query_model, configuration)
     system_prompt = configuration.more_info_system_prompt.format(
         logic=state.router["logic"]
     )
@@ -108,7 +220,7 @@ async def respond_to_general_query(
         dict[str, list[str]]: A dictionary with a 'messages' key containing the generated response.
     """
     configuration = AgentConfiguration.from_runnable_config(config)
-    model = load_chat_model(configuration.query_model)
+    model = load_chat_model(configuration.query_model, configuration)
     system_prompt = configuration.general_system_prompt.format(
         logic=state.router["logic"]
     )
@@ -136,7 +248,7 @@ async def create_research_plan(
         steps: list[str]
 
     configuration = AgentConfiguration.from_runnable_config(config)
-    model = load_chat_model(configuration.query_model).with_structured_output(Plan)
+    model = load_chat_model(configuration.query_model, configuration).with_structured_output(Plan)
     messages = [
         {"role": "system", "content": configuration.research_plan_system_prompt}
     ] + state.messages
@@ -198,7 +310,7 @@ async def respond(
         dict[str, list[str]]: A dictionary with a 'messages' key containing the generated response.
     """
     configuration = AgentConfiguration.from_runnable_config(config)
-    model = load_chat_model(configuration.response_model)
+    model = load_chat_model(configuration.response_model, configuration)
     context = format_docs(state.documents)
     prompt = configuration.response_system_prompt.format(context=context)
     messages = [{"role": "system", "content": prompt}] + state.messages
@@ -208,21 +320,45 @@ async def respond(
 
 # Define the graph
 builder = StateGraph(AgentState, input=InputState, config_schema=AgentConfiguration)
-builder.add_node(analyze_and_route_query)
-builder.add_node(ask_for_more_info)
-builder.add_node(respond_to_general_query)
-builder.add_node(conduct_research)
-builder.add_node(create_research_plan)
-builder.add_node(respond)
 
-builder.add_edge(START, "analyze_and_route_query")
-builder.add_conditional_edges("analyze_and_route_query", route_query)
-builder.add_edge("create_research_plan", "conduct_research")
-builder.add_conditional_edges("conduct_research", check_finished)
-builder.add_edge("ask_for_more_info", END)
-builder.add_edge("respond_to_general_query", END)
-builder.add_edge("respond", END)
+# Add nodes
+builder.add_node("understand_yemeni_legal_query_node", understand_yemeni_legal_query_node)
+builder.add_node("execute_direct_supabase_lookup_node", execute_direct_supabase_lookup_node)
+builder.add_node("generate_query_embedding_node", generate_query_embedding_node)
+builder.add_node("generate_multi_embeddings_node", generate_multi_embeddings_node)
+builder.add_node("supabase_hybrid_retriever_node", supabase_hybrid_retriever_node)
+builder.add_node("prepare_synthesis_node", prepare_synthesis_node)
+builder.add_node("synthesize_yemeni_legal_answer_node", synthesize_yemeni_legal_answer_node)
+builder.add_node("handle_conversational_query_node", handle_conversational_query_node)
 
-# Compile into a graph object that you can invoke and deploy.
+# Define Edges
+builder.set_conditional_entry_point(
+    initial_intake_router,
+    {
+        "understand_yemeni_legal_query_node": "understand_yemeni_legal_query_node",
+        "handle_conversational_query_node": "handle_conversational_query_node",
+    },
+)
+
+builder.add_conditional_edges(
+    "understand_yemeni_legal_query_node",
+    route_yemeni_legal_query,
+    {
+        "generate_query_embedding_node": "generate_query_embedding_node",
+        "generate_multi_embeddings_node": "generate_multi_embeddings_node",
+        "handle_conversational_query_node": "handle_conversational_query_node",
+        "execute_direct_supabase_lookup_node": "execute_direct_supabase_lookup_node",
+        "END": END,
+    }
+)
+
+builder.add_edge("execute_direct_supabase_lookup_node", "prepare_synthesis_node")
+builder.add_edge("generate_query_embedding_node", "supabase_hybrid_retriever_node")
+builder.add_edge("generate_multi_embeddings_node", "supabase_hybrid_retriever_node")
+builder.add_edge("supabase_hybrid_retriever_node", "prepare_synthesis_node")
+builder.add_edge("prepare_synthesis_node", "synthesize_yemeni_legal_answer_node")
+builder.add_edge("synthesize_yemeni_legal_answer_node", END)
+builder.add_edge("handle_conversational_query_node", END)
+
 graph = builder.compile()
-graph.name = "RetrievalGraph"
+graph.name = "AlMustasharRetrievalGraph"
