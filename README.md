@@ -1,6 +1,5 @@
 # المستشار (AlMustashar): An Advanced Legal RAG Agent for Yemeni Law
 
-![AlMustashar UI](static/studio_ui.png)
 
 **AlMustashar** is a state-of-the-art, production-ready Retrieval Augmented Generation (RAG) agent engineered to navigate the complexities of Yemeni law. It provides precise, context-aware, and verifiable legal analysis in Arabic, setting a new standard for legal AI in the region.
 
